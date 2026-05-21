@@ -1,0 +1,327 @@
+<!DOCTYPE html>この文書はhtmlで書かれています。
+<html lang="ja">
+<head>　ヘッダータグに通信プロトコルやファイルの情報、タイトル、データ構造などに対する説明が含まれる。
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>30秒迷路サバイバル</title>　このアプリのタイトル
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            touch-action: none;
+            user-select: none;
+        }
+        #game-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            aspect-ratio: 1 / 1;
+            margin: 0 auto;
+            background: #1a1a1a;
+            border: 4px solid #333;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        .ui-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            color: white;
+            font-family: sans-serif;
+            font-weight: bold;
+            pointer-events: none;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        }
+        .modal {
+            position: absolute;
+            inset: 0;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            text-align: center;
+            padding: 20px;
+            z-index: 10;
+        }
+        .joystick-container {
+            position: fixed;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 120px;
+            height: 120px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 50%;
+            display: none;
+        }
+        @media (max-width: 768px) {
+            .joystick-container { display: block; }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="mb-4 text-center">
+        <h1 class="text-3xl font-bold text-white mb-2">迷路サバイバル</h1>
+        <p class="text-slate-400">鬼から30秒間逃げ切れ！</p>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        
+        <div class="ui-overlay">
+            <div id="timer-display">TIME: 30.0s</div>
+            <div id="status-display">逃げろ！</div>
+        </div>
+
+        <!-- Start/Game Over/Win Modals -->
+        <div id="start-modal" class="modal">
+            <h2 class="text-4xl font-bold mb-4">準備はいいか？</h2>
+            <p class="mb-6">矢印キーまたはドラッグで移動</p>
+            <button onclick="startGame()" class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-full text-xl font-bold transition">スタート</button>
+        </div>
+
+        <div id="result-modal" class="modal hidden">
+            <h2 id="result-title" class="text-5xl font-bold mb-4 text-red-500">GAMEOVER</h2>
+            <p id="result-message" class="text-xl mb-8">鬼に捕まった...</p>
+            <button onclick="startGame()" class="bg-white text-black px-8 py-3 rounded-full text-xl font-bold hover:bg-gray-200 transition">もう一度プレイ</button>
+        </div>
+    </div>
+
+    <div class="mt-8 text-slate-500 text-sm max-w-md text-center">
+        PC: 矢印キーで移動<br>
+        スマホ: 画面をドラッグして移動
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const timerDisplay = document.getElementById('timer-display');
+        const startModal = document.getElementById('start-modal');
+        const resultModal = document.getElementById('result-modal');
+        const resultTitle = document.getElementById('result-title');
+        const resultMessage = document.getElementById('result-message');
+
+        // ゲーム設定
+        const GRID_SIZE = 15; // 15x15の迷路
+        let cellSize;
+        let gameActive = false;
+        let timeLeft = 30;
+        let lastTime = 0;
+
+        // プレイヤーと鬼の初期化
+        let player = { x: 1, y: 1, color: '#3b82f6', radius: 0.35 };
+        let enemy = { x: 13, y: 13, color: '#ef4444', radius: 0.4, speed: 1.5 }; // 鬼は少し速くなる
+
+        // 迷路データ (1: 壁, 0: 通路)
+        // シンプルな迷路生成アルゴリズムの代わりに固定マップを使用（確実な通路を確保）
+        const maze = [
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+            [1,0,0,0,0,0,1,0,0,0,0,0,0,0,1],
+            [1,0,1,1,1,0,1,0,1,1,1,1,1,0,1],
+            [1,0,1,0,0,0,0,0,0,0,1,0,0,0,1],
+            [1,0,1,0,1,1,1,1,1,0,1,0,1,1,1],
+            [1,0,0,0,1,0,0,0,1,0,0,0,0,0,1],
+            [1,1,1,0,1,0,1,0,1,1,1,1,1,0,1],
+            [1,0,0,0,0,0,1,0,0,0,0,0,1,0,1],
+            [1,0,1,1,1,1,1,1,1,1,1,0,1,0,1],
+            [1,0,0,0,1,0,0,0,0,0,1,0,0,0,1],
+            [1,1,1,0,1,0,1,1,1,0,1,1,1,0,1],
+            [1,0,0,0,0,0,1,0,1,0,0,0,1,0,1],
+            [1,0,1,1,1,1,1,0,1,1,1,0,1,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+        ];
+
+        // 入力管理
+        const keys = {};
+        window.addEventListener('keydown', e => keys[e.code] = true);
+        window.addEventListener('keyup', e => keys[e.code] = false);
+
+        // タッチ/マウス入力
+        let touchStart = null;
+        canvas.addEventListener('touchstart', e => {
+            const rect = canvas.getBoundingClientRect();
+            touchStart = { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+        });
+        canvas.addEventListener('touchmove', e => {
+            if (!touchStart) return;
+            const rect = canvas.getBoundingClientRect();
+            const current = { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+            handlePointer(current);
+            e.preventDefault();
+        }, { passive: false });
+        canvas.addEventListener('touchend', () => touchStart = null);
+
+        function handlePointer(current) {
+            const dx = current.x - touchStart.x;
+            const dy = current.y - touchStart.y;
+            const threshold = 10;
+            keys['ArrowUp'] = dy < -threshold;
+            keys['ArrowDown'] = dy > threshold;
+            keys['ArrowLeft'] = dx < -threshold;
+            keys['ArrowRight'] = dx > threshold;
+        }
+
+        function resize() {
+            const size = Math.min(window.innerWidth - 40, 600);
+            canvas.width = size;
+            canvas.height = size;
+            cellSize = size / GRID_SIZE;
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        function startGame() {
+            player.x = 1.5;
+            player.y = 1.5;
+            enemy.x = 13.5;
+            enemy.y = 13.5;
+            timeLeft = 30;
+            gameActive = true;
+            startModal.classList.add('hidden');
+            resultModal.classList.add('hidden');
+            lastTime = performance.now();
+            requestAnimationFrame(update);
+        }
+
+        function endGame(won) {
+            gameActive = false;
+            resultModal.classList.remove('hidden');
+            if (won) {
+                resultTitle.innerText = "CLEAR!";
+                resultTitle.className = "text-5xl font-bold mb-4 text-green-500";
+                resultMessage.innerText = "30秒間逃げ切った！おめでとう！";
+            } else {
+                resultTitle.innerText = "GAME OVER";
+                resultTitle.className = "text-5xl font-bold mb-4 text-red-500";
+                resultMessage.innerText = "鬼に捕まってしまった...";
+            }
+        }
+
+        function canMoveTo(x, y, radius) {
+            // 円の端が壁に当たっていないかチェック
+            const checkPoints = [
+                {x: x - radius, y: y - radius},
+                {x: x + radius, y: y - radius},
+                {x: x - radius, y: y + radius},
+                {x: x + radius, y: y + radius}
+            ];
+            return checkPoints.every(p => {
+                const mx = Math.floor(p.x);
+                const my = Math.floor(p.y);
+                return maze[my] && maze[my][mx] === 0;
+            });
+        }
+
+        function update(time) {
+            if (!gameActive) return;
+
+            const dt = (time - lastTime) / 1000;
+            lastTime = time;
+
+            // 時間減少
+            timeLeft -= dt;
+            if (timeLeft <= 0) {
+                timeLeft = 0;
+                endGame(true);
+            }
+            timerDisplay.innerText = `TIME: ${timeLeft.toFixed(1)}s`;
+
+            // プレイヤー移動
+            const pSpeed = 4 * dt;
+            let nextX = player.x;
+            let nextY = player.y;
+
+            if (keys['ArrowUp'] || keys['KeyW']) nextY -= pSpeed;
+            if (keys['ArrowDown'] || keys['KeyS']) nextY += pSpeed;
+            if (canMoveTo(player.x, nextY, player.radius)) player.y = nextY;
+
+            if (keys['ArrowLeft'] || keys['KeyA']) nextX -= pSpeed;
+            if (keys['ArrowRight'] || keys['KeyD']) nextX += pSpeed;
+            if (canMoveTo(nextX, player.y, player.radius)) player.x = nextX;
+
+            // 鬼のAI (簡易的な追尾)
+            const eSpeed = (2.5 + (30 - timeLeft) * 0.1) * dt; // 時間が経つと少し速くなる
+            const dx = player.x - enemy.x;
+            const dy = player.y - enemy.y;
+            const angle = Math.atan2(dy, dx);
+
+            // 鬼は壁を避けながら進む（単純化のためX軸、Y軸の順に移動試行）
+            let enextX = enemy.x + Math.cos(angle) * eSpeed;
+            let enextY = enemy.y + Math.sin(angle) * eSpeed;
+
+            if (canMoveTo(enextX, enemy.y, enemy.radius)) enemy.x = enextX;
+            if (canMoveTo(enemy.x, enextY, enemy.radius)) enemy.y = enextY;
+
+            // 衝突判定
+            const dist = Math.sqrt((player.x - enemy.x)**2 + (player.y - enemy.y)**2);
+            if (dist < player.radius + enemy.radius) {
+                endGame(false);
+            }
+
+            draw();
+            requestAnimationFrame(update);
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 迷路の描画
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    if (maze[y][x] === 1) {
+                        ctx.fillStyle = '#334155';
+                        ctx.fillRect(x * cellSize, y * cellSize, cellSize + 1, cellSize + 1);
+                        
+                        // 壁のディテール（グリッド線）
+                        ctx.strokeStyle = '#1e293b';
+                        ctx.strokeRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                    } else {
+                        ctx.fillStyle = '#0f172a';
+                        ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                    }
+                }
+            }
+
+            // プレイヤー
+            ctx.beginPath();
+            ctx.arc(player.x * cellSize, player.y * cellSize, player.radius * cellSize, 0, Math.PI * 2);
+            ctx.fillStyle = player.color;
+            ctx.fill();
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = player.color;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // 鬼
+            ctx.beginPath();
+            ctx.arc(enemy.x * cellSize, enemy.y * cellSize, enemy.radius * cellSize, 0, Math.PI * 2);
+            ctx.fillStyle = enemy.color;
+            ctx.fill();
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = enemy.color;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // 鬼の目
+            ctx.fillStyle = 'white';
+            ctx.fillRect(enemy.x * cellSize - 4, enemy.y * cellSize - 4, 3, 3);
+            ctx.fillRect(enemy.x * cellSize + 1, enemy.y * cellSize - 4, 3, 3);
+        }
+
+        // 初期描画
+        draw();
+    </script>
+</body>
+</html>
